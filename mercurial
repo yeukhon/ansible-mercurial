@@ -1,0 +1,128 @@
+#!/usr/bin/python
+
+import os, syslog, subprocess
+from subprocess import Popen, PIPE
+from os.path import abspath, expanduser, exists, join
+import shutil
+import traceback
+
+DOCUMENTATION = '''
+---
+module: mercurial
+short_description: Manages Mercurial (hg) repositories
+description:
+  - Manages Mercurial (hg) repositories.
+version_added: "1.0"
+options:
+  repo:
+    description:
+      - The repository name/value
+    required: true
+    default: null
+  dest:
+    description:
+      - The full path where the repository resides
+    required: true
+    default: null
+  state:
+    description:
+      - State of the repository
+    required: false
+    default: present
+    choices: [ "present", "absent" , "latest"]
+notes:
+author: Yeukhon Wong
+examples:
+- code: "mercurial: repo=https://bitbucket.org/user/repo_name dest=/home/user/repo_name"
+  description: Clone down the repository from Bitbucket to the destination path.
+- code: "mercurial: repo=https://bitbucket.org/user/repo_name dest=/home/user/repo_name state=absent"
+  description: Remove the repository from the given destination if exist.
+- code: "mercurial: repo=https://bitbucket.org/user/repo_name dest=/home/user/repo_name state=latest"
+  description: Pull and update repository where revision is default (the most recent).
+- code: "mercurial: repo=https://bitbucket.org/user/repo_name dest=/home/user/repo_name state=latest rev=1743efa"
+  description: Pull and update repository where revision is explicitly given.
+'''
+
+class HgError(Exception):
+    def __init__(self, msg, stderr=''):
+        self.msg = msg + \
+                  "\nExtra information on this error: \n" + \
+                   stderr
+    def __str__(self):
+        return self.msg
+
+def _hg_command(args_list):
+    cmd = ['hg'] + args_list
+    p = Popen(cmd, stdout=PIPE, stderr=PIPE)
+    out, err = p.communicate()
+    return out, err, p.returncode
+
+def _hg_verify(dest):
+    warning = 'hg repository at {dest} is {reason}'
+    error_msg = ''
+    out, err, code = _hg_command( ['verify', '-R', dest] )
+    if code == 1:
+        error_msg = warning.format(dest=dest, reason='corrupted')
+    elif code == 255:
+        error_msg = warning.format(dest=dest, reason='missing')
+    elif code == 0:
+        return True
+    # either unknown returncode, corrupted, missing
+    raise HgError(error_msg, stderr=err)
+
+def pull_and_update(repo, dest, rev):
+    if _hg_verify(dest):
+        cmd1 = ['pull', '-R', dest, '-r', rev]
+        out, err, code = _hg_command( cmd1 )
+        if code == 1:
+            raise HgError("Unable to perform pull on %s" % dest, stderr=err)
+        elif code == 0:        
+            cmd2 = ['update', '-R', dest, '-r', rev]
+            out, err, code = _hg_command( cmd2 )
+            if code == 1:
+                raise HgError("There are unresolved files in %s" % dest, stderr=err)
+            elif code == 0:
+                return True
+        # when code aren't 1 or 0 in either command
+        raise HgError("", stderr=err)
+
+def clone(repo, dest, rev):
+    if os.path.exists(dest):
+        return False
+
+    cmd = ['clone', repo, dest, '-r', rev]
+    cout, cerr, ccode = _hg_command( cmd )
+    # ensure no corruption post-clone action
+    _hg_verify(dest)
+    return True
+
+def main():
+    module = AnsibleModule(
+        argument_spec = dict(
+            repo = dict( required=True ),	    
+            dest = dict( required=True ),
+            state = dict( default='present', choices=['present', 'absent', 'latest'] ),
+            rev = dict( default="default" ),
+        ),
+    )
+
+    params = module.params
+    state = params['state']
+    try:
+        if state == 'absent':
+            shutil.rmtree(params['dest'])
+            changed = True
+        elif state == 'present':
+            changed = clone(params['repo'], params['dest'], params['rev'])
+        elif state == 'latest':
+            changed = pull_and_update(params['repo'], params['dest'], params['rev'])
+        module.exit_json( dest=params["dest"], changed=changed )
+    except HgError as e:
+        msg = str(e)
+        #syslog.syslog(syslog.LOG_ERR, "Ansible error in mercurial module: " + msg)
+        #module.fail_json(msg=msg, traceback=traceback.format_exc(), params=params)
+        module.fail_json(msg=msg, params=params)
+
+# include magic from lib/ansible/module_common.py
+#<<INCLUDE_ANSIBLE_MODULE_COMMON>>
+main()
