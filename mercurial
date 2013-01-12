@@ -1,43 +1,40 @@
 #!/usr/bin/python
 
-import os, syslog, subprocess
-from subprocess import Popen, PIPE
-from os.path import abspath, expanduser, exists, join
+import os
 import shutil
-import traceback
+from subprocess import Popen, PIPE
+#import traceback
 
 DOCUMENTATION = '''
 ---
 module: mercurial
 short_description: Manages Mercurial (hg) repositories
 description:
-  - Manages Mercurial (hg) repositories.
+  - Manages Mercurial (hg) repositories. Supports SSH, HTTP/S and local operation. To access private repositories, see the Notes section below.
 version_added: "1.0"
 options:
   repo:
-    description:
-      - The repository name/value
-    required: true
-    default: null
+      description:
+            - The repository location on disk or on remote service such as Bitbucket.
+      required: true
+      default: null
   dest:
-    description:
-      - The repository destination path
-    required: true
-    default: null
+      description:
+            - Absolute path of where the repository should be on disk.
+      required: true
+      default: null
   state:
-    description:
-      - State of the repository
-    required: false
-    default: present
-    choices: [ "present", "absent", "latest" ]
+      description:
+            - State of the repository
+      required: false
+      default: present
+      choices: [ "present", "absent", "latest" ]
 author: Yeukhon Wong
+notes:
+  - To access private repositories using SSH, you can include `StrictHostKeyChecking no` in .ssh/config so it accepts the ssh authentication the first time it connects to an unknown host. 
 examples:
 - code: "mercurial: repo=https://bitbucket.org/user/repo_name dest=/home/user/repo_name"
   description: Clone the default branch of repo_name.
-- code: "mercurial: repo=https://bitbucket.org/user/repo_name dest=/home/user/repo_name state=present"
-  description: Clone the default branch of repo_name if it hasn't exist at dest.
-- code: "mercurial: repo=https://bitbucket.org/user/repo_name dest=/home/user/repo_name state=latest"
-  description: Make sure the latest revision from the default branch is cloned.
 - code: "mercurial: repo=https://bitbucket.org/user/repo_name dest=/home/user/repo_name state=latest rev="72f75ae"
   description: Clone the repository where the tip is set to revision 72f75ae.
 - code: "mercurial: repo=https://bitbucket.org/user/repo_name dest=/home/user/repo_name state=present rev="72f75ae"
@@ -91,7 +88,9 @@ def _hg_command(args_list):
     err : str
         Standard error post hg-command execution.
     p.returncode : int
-        Return code from the hg-command
+        Return code from the hg-command.
+        0 is always success. For other values, please
+        refer to the hg help.
 
     See Also
     --------
@@ -141,6 +140,58 @@ def _hg_verify(dest):
     # either unknown returncode, corrupted, missing
     raise HgError(error_msg, stderr=err)
 
+def _post_op_hg_rev_check(dest, rev):
+    """
+    Verify the tip is the same as `rev`.
+
+    This function is usually called after some hg operations
+    such as `clone`. However, this check is skipped if `rev`
+    is the string `default` since it will result an error. 
+    For this particular case, pull is performed.
+
+    Parameters
+    ----------
+    dest : str
+        The full path where the repository lives on disk.
+    
+    rev : str
+        Desired revision to check against the current tip.
+
+    Returns
+    -------
+    success : bool
+        True if the tip is `rev`.
+
+    Raises
+    ------
+    HgError
+        When tip is not `rev` or when the command fails.
+            
+    See Also
+    --------
+    `hg -v tip --help` for more information.
+
+    """
+
+    err1 = "Unable to perform hg tip."
+    err2 = "tip is different from %s. See below for extended summary." % rev
+
+    if rev == 'default':
+        out, err, code = _hg_command( ['pull', '-R', dest] )
+        if "no changes found" in out:
+            return True
+        else:
+            raise HgError(err2, stderr=out)
+    else:
+        out, err, code = _hg_command( ['tip', '-R', dest] )
+        if rev in out:   # rev should be part of the output (changeset: rev ...)
+            return True
+        else:
+            if code != 0: # something went wrong with hg tip
+                raise HgError(err1, stderr=err)
+            else: # hg tip is fine, but tip != rev as we hoped
+                raise HgError(err2, stderr=out)
+
 def pull_and_update(repo, dest, rev):
     """
     Perform an update on the target repository.
@@ -175,6 +226,8 @@ def pull_and_update(repo, dest, rev):
     if _hg_verify(dest):
         cmd1 = ['pull', '-R', dest, '-r', rev]
         out, err, code = _hg_command( cmd1 )
+
+        # For returncode claifiation, see _hg_command written above.
         if code == 1:
             raise HgError("Unable to perform pull on %s" % dest, stderr=err)
         elif code == 0:        
@@ -183,6 +236,8 @@ def pull_and_update(repo, dest, rev):
             if code == 1:
                 raise HgError("There are unresolved files in %s" % dest, stderr=err)
             elif code == 0:
+                # so far pull and update seems to be working, check rev is met
+                _post_op_hg_rev_check(dest, rev)
                 return True
         # when code aren't 1 or 0 in either command
         raise HgError("", stderr=err)
@@ -225,8 +280,9 @@ def clone(repo, dest, rev):
 
     cmd = ['clone', repo, dest, '-r', rev]
     cout, cerr, ccode = _hg_command( cmd )
-    # ensure no corruption post-clone action
-    _hg_verify(dest)
+
+    _hg_verify(dest)   # ensure repo integrity is met
+    _post_op_hg_rev_check(dest, rev)  # ensure rev is met
     return True
 
 def main():
@@ -255,10 +311,7 @@ def main():
             changed = pull_and_update(repo, dest, rev)
         module.exit_json( dest=dest, changed=changed )
     except HgError as e:
-        msg = str(e)
-        #syslog.syslog(syslog.LOG_ERR, "Ansible error in mercurial module: " + msg)
-        #module.fail_json(msg=msg, traceback=traceback.format_exc(), params=params)
-        module.fail_json(msg=msg, params=params)
+        module.fail_json(msg=str(msg), params=params)
 
 # include magic from lib/ansible/module_common.py
 #<<INCLUDE_ANSIBLE_MODULE_COMMON>>

@@ -1,0 +1,44 @@
+---
+- hosts: 192.168.1.103
+  user: vagrant
+  sudo: True
+  tasks:
+     - name: install me
+       action: apt name=mercurial state=installed
+
+- hosts: 192.168.1.103
+  user: vagrant
+
+  tasks:
+
+     - name: clone scm-hook
+       action: mercurial repo=https://bitbucket.org/yeukhon/scm-hook dest=/home/vagrant/scm-hook
+     - name: clone scm-hook idempotence
+       action: mercurial repo=https://bitbucket.org/yeukhon/scm-hook dest=/home/vagrant/scm-hook
+     - name: clone scm-hook idempotence with state=present explicit
+       action: mercurial repo=https://bitbucket.org/yeukhon/scm-hook dest=/home/vagrant/scm-hook state=present
+     - name: remove scm-hook
+       action: file path=/home/vagrant/scm-hook state=absent
+
+     - name: clone playground from ssh
+       action: mercurial repo=ssh://hg@bitbucket.org/yeukhon/playground dest=/home/vagrant/playground
+     - name: clone playground from ssh idempotence
+       action: mercurial repo=ssh://hg@bitbucket.org/yeukhon/playground dest=/home/vagrant/playground
+     - name: clone playground from ssh idempotence with rev and state=present
+       action: mercurial repo=ssh://hg@bitbucket.org/yeukhon/playground dest=/home/vagrant/playground rev=default state=present
+
+     - name: remove playground
+       action: file path=/home/vagrant/playground state=absent
+
+     - name: clone playground from three revs 
+       action: mercurial repo=ssh://hg@bitbucket.org/yeukhon/playground dest=/home/vagrant/playground rev=f21ccd8
+
+     - name: clone playground from three revs idempotence
+       action: mercurial repo=ssh://hg@bitbucket.org/yeukhon/playground dest=/home/vagrant/playground rev=f21ccd8
+     - name: clone update to one rev up
+       action: mercurial repo=ssh://hg@bitbucket.org/yeukhon/playground dest=/home/vagrant/playground rev=72f75ae state=latest
+     - name: clone update to one rev up idemptoence
+       action: mercurial repo=ssh://hg@bitbucket.org/yeukhon/playground dest=/home/vagrant/playground rev=72f75ae state=latest
+     - name: remove playground
+       action: file path=/home/vagrant/playground state=absent
+
