@@ -21,7 +21,7 @@ options:
     default: null
   dest:
     description:
-      - The full path where the repository resides
+      - The repository destination path
     required: true
     default: null
   state:
@@ -29,21 +29,45 @@ options:
       - State of the repository
     required: false
     default: present
-    choices: [ "present", "absent" , "latest"]
-notes:
+    choices: [ "present", "absent", "latest" ]
 author: Yeukhon Wong
 examples:
 - code: "mercurial: repo=https://bitbucket.org/user/repo_name dest=/home/user/repo_name"
-  description: Clone down the repository from Bitbucket to the destination path.
-- code: "mercurial: repo=https://bitbucket.org/user/repo_name dest=/home/user/repo_name state=absent"
-  description: Remove the repository from the given destination if exist.
+  description: Clone the default branch of repo_name.
+- code: "mercurial: repo=https://bitbucket.org/user/repo_name dest=/home/user/repo_name state=present"
+  description: Clone the default branch of repo_name if it hasn't exist at dest.
 - code: "mercurial: repo=https://bitbucket.org/user/repo_name dest=/home/user/repo_name state=latest"
-  description: Pull and update repository where revision is default (the most recent).
-- code: "mercurial: repo=https://bitbucket.org/user/repo_name dest=/home/user/repo_name state=latest rev=1743efa"
-  description: Pull and update repository where revision is explicitly given.
+  description: Make sure the latest revision from the default branch is cloned.
+- code: "mercurial: repo=https://bitbucket.org/user/repo_name dest=/home/user/repo_name state=latest rev="72f75ae"
+  description: Clone the repository where the tip is set to revision 72f75ae.
+- code: "mercurial: repo=https://bitbucket.org/user/repo_name dest=/home/user/repo_name state=present rev="72f75ae"
+  description: Ensure the repository is cloned to disk and revision 72f75ae is the tip of the respoistory.
+- code: "mercurial: repo=https://bitbucket.org/user/repo_name dest=/home/user/repo_name state=absent"
+  description: Ensure the repository at dest is removed from the disk.
 '''
 
 class HgError(Exception):
+    """
+    Custom exception class to report hg command error.
+    
+    Attributes
+    ----------
+    msg : str
+        The error message to show to users.
+    
+    Methods
+    -------
+    __init__(msg, stderr='')
+        Constructor of HgError exception. Argument `msg` is the primary
+        message to show to the user. `stderr` is additional information
+        concatenated to `msg`.
+
+    __str__()
+        Returns `msg` passed to the constructor (may include `stderr` if
+        it isn't empty initially through constructor).
+
+    """
+
     def __init__(self, msg, stderr=''):
         self.msg = msg + \
                   "\nExtra information on this error: \n" + \
@@ -52,12 +76,59 @@ class HgError(Exception):
         return self.msg
 
 def _hg_command(args_list):
+    """
+    Take hg command arguemtns and invoke the command via subprocess.
+
+    Parameters
+    ----------
+    args_list : list
+        A list of arguments and options for the hg command.
+
+    Returns
+    -------
+    out : str
+        Standard output post hg-command execution.
+    err : str
+        Standard error post hg-command execution.
+    p.returncode : int
+        Return code from the hg-command
+
+    See Also
+    --------
+    `hg -v command_name --help` for the returncode and usage.
+
+    """
+
     cmd = ['hg'] + args_list
     p = Popen(cmd, stdout=PIPE, stderr=PIPE)
     out, err = p.communicate()
     return out, err, p.returncode
 
 def _hg_verify(dest):
+    """
+    Verify the integrity of the repository.
+
+    Parameters
+    ----------
+    dest : str
+        The full path where the repository lives on disk.
+    
+    Returns
+    -------
+    success : int
+        0 if integrity is good
+
+    Raises
+    ------
+    HgError
+        If integrity failed or other unknown conditions such as non-existing repository.
+            
+    See Also
+    --------
+    `hg -v verify --help` for more information.
+    
+    """
+
     warning = 'hg repository at {dest} is {reason}'
     error_msg = ''
     out, err, code = _hg_command( ['verify', '-R', dest] )
@@ -71,6 +142,36 @@ def _hg_verify(dest):
     raise HgError(error_msg, stderr=err)
 
 def pull_and_update(repo, dest, rev):
+    """
+    Perform an update on the target repository.
+
+    It first pulls the given `rev` (e.g. default) and then
+    updates the current repository workspace physically.
+
+    Parameters
+    ----------
+    repo : str
+        The location of the repository. It can either be
+        a remote service such as Bitbucket or locally.
+        SSH, HTTP, HTTPS and local are valid repo scheme and
+        location.
+    dest : str
+        Full path where the pull and update takes place.
+    rev : str
+        Default to the tip of the default branch.
+
+    Returns
+    -------
+    success : bool
+        True if update completes without issue. Otherwise,
+        `HgError` is raised.
+    
+    Raises
+    ------
+    HgError
+        When either pull or update fails.
+    
+    """
     if _hg_verify(dest):
         cmd1 = ['pull', '-R', dest, '-r', rev]
         out, err, code = _hg_command( cmd1 )
@@ -87,6 +188,38 @@ def pull_and_update(repo, dest, rev):
         raise HgError("", stderr=err)
 
 def clone(repo, dest, rev):
+    """
+    Clone down a copy of the repository.
+
+    Performs a simple hg clone from `repo` to
+    `dest` given revision `rev` which defaults to
+    the tip of the default branch.
+
+    Parameters
+    ----------
+    repo : str
+        The location of the repository. It can either be
+        a remote service such as Bitbucket or locally.
+        SSH, HTTP, HTTPS and local are valid repo scheme and
+        location.
+    dest : str
+        Full path where the clone repository should reside.
+    rev : str
+        Default to the tip of the default branch.
+
+    Returns
+    -------
+    success : bool
+        True if clone is successful and integrity is verified.
+        False if the `dest` exists; no clone is performed.
+
+    Raises
+    ------
+    HgError
+        When the repository's integrity check fails.
+    
+    """
+
     if os.path.exists(dest):
         return False
 
@@ -105,18 +238,22 @@ def main():
             rev = dict( default="default" ),
         ),
     )
-
     params = module.params
+    repo = params['repo']
     state = params['state']
+    dest = params['dest']
+    rev = params['rev']
+
     try:
         if state == 'absent':
-            shutil.rmtree(params['dest'])
+            if not os.path.exists(dest):
+                shutil.rmtree(dest)
             changed = True
         elif state == 'present':
-            changed = clone(params['repo'], params['dest'], params['rev'])
+            changed = clone(repo, dest, rev)
         elif state == 'latest':
-            changed = pull_and_update(params['repo'], params['dest'], params['rev'])
-        module.exit_json( dest=params["dest"], changed=changed )
+            changed = pull_and_update(repo, dest, rev)
+        module.exit_json( dest=dest, changed=changed )
     except HgError as e:
         msg = str(e)
         #syslog.syslog(syslog.LOG_ERR, "Ansible error in mercurial module: " + msg)
