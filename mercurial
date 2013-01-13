@@ -128,17 +128,15 @@ def _hg_verify(dest):
     
     """
 
-    warning = 'hg repository at {dest} is {reason}'
-    error_msg = ''
+    error1 = "hg verify failed."
+    error2 = "{dest} is not a repository.".format(dest=dest)
     out, err, code = _hg_command( ['verify', '-R', dest] )
     if code == 1:
-        error_msg = warning.format(dest=dest, reason='corrupted')
+        raise HgError(error1, stderr=err)
     elif code == 255:
-        error_msg = warning.format(dest=dest, reason='missing')
+        raise HgError(error2, stderr=err)
     elif code == 0:
         return True
-    # either unknown returncode, corrupted, missing
-    raise HgError(error_msg, stderr=err)
 
 def _post_op_hg_rev_check(dest, rev):
     """
@@ -177,13 +175,13 @@ def _post_op_hg_rev_check(dest, rev):
     err2 = "tip is different from %s. See below for extended summary." % rev
 
     if rev == 'default':
-        out, err, code = _hg_command( ['pull', '-R', dest] )
+        out, err, code = _hg_command(['pull', '-R', dest])
         if "no changes found" in out:
             return True
         else:
             raise HgError(err2, stderr=out)
     else:
-        out, err, code = _hg_command( ['tip', '-R', dest] )
+        out, err, code = _hg_command(['tip', '-R', dest])
         if rev in out:   # rev should be part of the output (changeset: rev ...)
             return True
         else:
@@ -225,14 +223,14 @@ def pull_and_update(repo, dest, rev):
     """
     if _hg_verify(dest):
         cmd1 = ['pull', '-R', dest, '-r', rev]
-        out, err, code = _hg_command( cmd1 )
+        out, err, code = _hg_command(cmd1)
 
         # For returncode claifiation, see _hg_command written above.
         if code == 1:
             raise HgError("Unable to perform pull on %s" % dest, stderr=err)
         elif code == 0:        
             cmd2 = ['update', '-R', dest, '-r', rev]
-            out, err, code = _hg_command( cmd2 )
+            out, err, code = _hg_command(cmd2)
             if code == 1:
                 raise HgError("There are unresolved files in %s" % dest, stderr=err)
             elif code == 0:
@@ -276,29 +274,32 @@ def clone(repo, dest, rev):
     """
 
     if os.path.exists(dest):
-        return False
+        if _hg_verify(dest):  # make sure it's a real repo
+            if _post_op_hg_rev_check(dest, rev): # make sure rev is met
+                return False
 
     cmd = ['clone', repo, dest, '-r', rev]
-    cout, cerr, ccode = _hg_command( cmd )
-
-    _hg_verify(dest)   # ensure repo integrity is met
-    _post_op_hg_rev_check(dest, rev)  # ensure rev is met
-    return True
+    out, err, code = _hg_command(cmd)
+    if code == 0:
+        _hg_verify(dest)
+        _post_op_hg_rev_check(dest, rev)
+        return True
+    else:
+        raise HgError(err, stderr='')
 
 def main():
     module = AnsibleModule(
         argument_spec = dict(
-            repo = dict( required=True ),	    
-            dest = dict( required=True ),
-            state = dict( default='present', choices=['present', 'absent', 'latest'] ),
-            rev = dict( default="default" ),
+            repo = dict(required=True),	    
+            dest = dict(required=True),
+            state = dict(default='present', choices=['present', 'absent', 'latest']),
+            rev = dict(default="default"),
         ),
     )
-    params = module.params
-    repo = params['repo']
-    state = params['state']
-    dest = params['dest']
-    rev = params['rev']
+    repo = module.params['repo']
+    state = module.params['state']
+    dest = module.params['dest']
+    rev = module.params['rev']
 
     try:
         if state == 'absent':
@@ -309,9 +310,10 @@ def main():
             changed = clone(repo, dest, rev)
         elif state == 'latest':
             changed = pull_and_update(repo, dest, rev)
-        module.exit_json( dest=dest, changed=changed )
+
+        module.exit_json(dest=dest, changed=changed)
     except HgError as e:
-        module.fail_json(msg=str(msg), params=params)
+        module.fail_json(msg=str(e), params=module.params)
 
 # include magic from lib/ansible/module_common.py
 #<<INCLUDE_ANSIBLE_MODULE_COMMON>>

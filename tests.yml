@@ -8,7 +8,8 @@
 
 - hosts: 192.168.1.103
   user: vagrant
-
+  tags: 
+    - good
   tasks:
 
      - name: clone scm-hook
@@ -41,4 +42,13 @@
        action: mercurial repo=ssh://hg@bitbucket.org/yeukhon/playground dest=/home/vagrant/playground rev=72f75ae state=latest
      - name: remove playground
        action: file path=/home/vagrant/playground state=absent
+
+     - name: bad url
+       tags:
+        - bad_url
+       action: mercurial repo=https://bitbucket.org/yeukhon/scm-hoo dest=/home/vagrant/scm-hook
+     - name: bad rev
+       tags:
+        - bad_rev
+       action: mercurial repo=https://bitbucket.org/yeukhon/scm-hook dest=/home/vagrant/scm-hook rev=random
 

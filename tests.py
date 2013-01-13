@@ -8,5 +8,8 @@ else:
 os.system("rm -rf /home/glasslab/scm-hook")
 
 print("now tests on the server")
-os.system("ansible-playbook tests.yml -u vagrant -k")
+#os.system("ansible-playbook tests.yml -u vagrant -k")
+os.system("ansible-playbook tests.yml -u vagrant -k --tags 'bad_url'")
+os.system("ansible-playbook tests.yml -u vagrant -k --tags 'bad_rev'")
+
 #os.system("ansible/hacking/test-module -m
