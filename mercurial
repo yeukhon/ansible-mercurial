@@ -61,7 +61,7 @@ def _hg_command(args_list):
 def _hg_verify(dest):
     error1 = "hg verify failed."
     error2 = "{dest} is not a repository.".format(dest=dest)
-    out, err, code = _hg_command( ['verify', '-R', dest] )
+    out, err, code = _hg_command(['verify', '-R', dest])
     if code == 1:
         raise HgError(error1, stderr=err)
     elif code == 255:
@@ -104,7 +104,6 @@ def pull_and_update(repo, dest, rev):
         cmd1 = ['pull', '-R', dest, '-r', rev]
         out, err, code = _hg_command(cmd1)
 
-        # For returncode claifiation, see _hg_command written above.
         if code == 1:
             raise HgError("Unable to perform pull on %s" % dest, stderr=err)
         elif code == 0:        
