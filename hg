@@ -29,43 +29,51 @@ from subprocess import Popen, PIPE
 DOCUMENTATION = '''
 ---
 module: hg
-short_description: Manages Mercurial (hg) repositories
+short_description: Manages Mercurial (hg) repositories.
 description:
-  - Manages Mercurial (hg) repositories. Supports SSH, HTTP/S and local operation.
+  - Manages Mercurial (hg) repositories. Supports SSH, HTTP/S and local address.
 version_added: "1.0"
 options:
   repo:
-      description:
-            - The repository location.
-      required: true
-      default: null
+    description:
+      - The repository location.
+    required: true
+    default: null
   dest:
-      description:
-            - Absolute path of where the repository should be cloned to.
-      required: true
-      default: null
+    description:
+      - Absolute path of where the repository should be cloned to.
+    required: true
+    default: null
   state:
-      description:
-            - C(hg clone) is performed when state is set to C(present). C(hg pull) and C(hg update) is performed when state is set to C(latest). If you want the latest copy of the repository, just rely on C(present). C(latest) assumes the repository is already on disk.
-      required: false
-      default: present
-      choices: [ "present", "absent", "latest" ]
+    description:
+      - C(hg clone) is performed when state is set to C(present). C(hg pull) and C(hg update) is
+        performed when state is set to C(latest). If you want the latest copy of the repository,
+        just rely on C(present). C(latest) assumes the repository is already on disk.
+    required: false
+    default: present
+    choices: [ "present", "absent", "latest" ]
   revision:
-      description:
-            - Equivalent C(-r) option in hg command, which can either be a changeset number or a branch name.
-      required: false
-      default: "default"
+    description:
+      - Equivalent C(-r) option in hg command, which can either be a changeset number or a branch
+        name.
+    required: false
+    default: "default"
   force:
-      description:
-            - Whether to discard uncommitted changes and remove untracked files or not. Basically, it combines C(hg up -C) and C(hg purge).
-      required: false
-      default: "yes"
-      choices: [ "yes", "no" ]
+    description:
+      - Whether to discard uncommitted changes and remove untracked files or not. Basically, it
+        combines C(hg up -C) and C(hg purge).
+    required: false
+    default: "yes"
+    choices: [ "yes", "no" ]
  
 author: Yeukhon Wong
 notes:
-  - To access private repositories using SSH, you may include `StrictHostKeyChecking no` in .ssh/config so it accepts the ssh authentication the first time it connects to an unknown host to avoid hanging.
-  - If C(sudo: True), unless root has authenticated the SSH connection before, it will hang due to prompt. Avoid C(sudo: True) whenever possible.
+  - If the task appears in an idle state, first verify the host you are trying to connect to is 
+    in .ssh/known_hosts. Otherwise, SSH will prompt user to accept. To resolve this issue, you 
+    may include C(StrictHostKeyChecking no) in .ssh/config which will accept and authorize the 
+    connection whether the remote host is present in known_hosts already or not. However, when 
+    combine this module with C(sudo: True), root does not look your user's .ssh/config so the 
+    task will hang.
 
 examples:
 - code: "hg: repo=https://bitbucket.org/user/repo_name dest=/home/user/repo_name"
@@ -73,9 +81,9 @@ examples:
 - code: "hg: repo=https://bitbucket.org/user/repo_name dest=/home/user/repo_name state=latest revision="72f75ae"
   description: Clone the repository where the tip is set to revisionision 72f75ae.
 - code: "hg: repo=https://bitbucket.org/user/repo_name dest=/home/user/repo_name state=present revision="72f75ae"
-  description: Ensure the repository is cloned to disk and revisionision 72f75ae is the tip of the respoistory.
-- code: "hg: repo=https://bitbucket.org/user/repo_name dest=/home/user/repo_name state=absent"
-  description: Ensure the repository at dest is removed from the disk.
+  description: Ensure the repository is cloned to disk and revision 72f75ae is the tip of the repository.
+- code: "hg: repo=https://bitbucket.org/user/repo_name dest=/home/user/repo_name force=yes state=latest
+  description: Ensure the repository at dest is latest and discard any uncommitted and/or untracked files.
 '''
 
 class HgError(Exception):
@@ -83,7 +91,7 @@ class HgError(Exception):
 
     def __init__(self, msg, stderr=''):
         self.msg = msg + \
-                  "\nExtra information on this error: \n" + \
+                  "\n\nExtra information on this error: \n" + \
                    stderr
     def __str__(self):
         return self.msg
@@ -156,7 +164,7 @@ def _post_op_hg_revision_check(dest, revision):
     This function is usually called after some hg operations
     such as `clone`. However, this check is skipped if `revision`
     is the string `default` since it will result an error. 
-    For this particular case, pull is performed.
+    Instead, pull is performed.
 
     """
 
