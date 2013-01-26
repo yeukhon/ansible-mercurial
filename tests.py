@@ -9,7 +9,9 @@ else:
 os.system("rm -rf /home/{user}/scm-hook".format(user=getpass.getuser()))
 
 print("now tests on the server")
-os.system("ansible-playbook tests.yml -u vagrant -k")
+os.system("ansible-playbook tests.yml -u vagrant -k --tags='good'")
+os.system("ansible-playbook tests.yml -u vagrant -k --tags='force'")
+
 os.system("ansible-playbook tests.yml -u vagrant --tags 'bad_url'")
 os.system("ansible-playbook tests.yml -u vagrant --tags 'bad_revision'")
 

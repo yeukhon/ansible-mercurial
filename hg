@@ -2,36 +2,50 @@
 
 import os
 import shutil
+import ConfigParser
 from subprocess import Popen, PIPE
-#import traceback
 
 DOCUMENTATION = '''
 ---
 module: hg
 short_description: Manages Mercurial (hg) repositories
 description:
-  - Manages Mercurial (hg) repositories. Supports SSH, HTTP/S and local operation. To access private repositories, see the Notes section below.
+  - Manages Mercurial (hg) repositories. Supports SSH, HTTP/S and local operation.
 version_added: "1.0"
 options:
   repo:
       description:
-            - The repository location on disk or on remote service such as Bitbucket.
+            - The repository location.
       required: true
       default: null
   dest:
       description:
-            - Absolute path of where the repository should be on disk.
+            - Absolute path of where the repository should be cloned to.
       required: true
       default: null
   state:
       description:
-            - State of the repository
+            - C(hg clone) is performed when state is set to C(present). C(hg pull) and C(hg update) is performed when state is set to C(latest). If you want the latest copy of the repository, just rely on C(present). C(latest) assumes the repository is already on disk.
       required: false
       default: present
       choices: [ "present", "absent", "latest" ]
+  revision:
+      description:
+            - Equivalent C(-r) option in hg command, which can either be a changeset number or a branch name.
+      required: false
+      default: "default"
+  force:
+      description:
+            - Whether to discard uncommitted changes and remove untracked files or not. Basically, it combines C(hg up -C) and C(hg purge).
+      required: false
+      default: "yes"
+      choices: [ "yes", "no" ]
+ 
 author: Yeukhon Wong
 notes:
-  - To access private repositories using SSH, you can include `StrictHostKeyChecking no` in .ssh/config so it accepts the ssh authentication the first time it connects to an unknown host. 
+  - To access private repositories using SSH, you may include `StrictHostKeyChecking no` in .ssh/config so it accepts the ssh authentication the first time it connects to an unknown host to avoid hanging.
+  - If C(sudo: True), unless root has authenticated the SSH connection before, it will hang due to prompt. Avoid C(sudo: True) whenever possible.
+
 examples:
 - code: "hg: repo=https://bitbucket.org/user/repo_name dest=/home/user/repo_name"
   description: Clone the default branch of repo_name.
@@ -45,6 +59,7 @@ examples:
 
 class HgError(Exception):
     """  Custom exception class to report hg command error. """
+
     def __init__(self, msg, stderr=''):
         self.msg = msg + \
                   "\nExtra information on this error: \n" + \
@@ -52,15 +67,56 @@ class HgError(Exception):
     def __str__(self):
         return self.msg
 
+def _set_hgrc(hgrc, vals):
+    # val is a list of triple-tuple of the form [(section, option, value),...]
+    parser = ConfigParser.SafeConfigParser()
+    parser.read(hgrc)
+
+    for each in vals:
+        section,option, value = each
+        if not parser.has_section(section):
+            parser.add_section(section)
+        parser.set(section, option, value)
+
+    with open(hgrc, 'w') as f:
+        parser.write(f)
+
+def _undo_hgrc(hgrc, vals):
+    parser = ConfigParser.SafeConfigParser()
+    parser.read(hgrc)
+    
+    for each in vals:
+        section, option, value = each
+        if parser.has_section(section):
+            parser.remove_option(section, option)
+    with open(hgrc, 'w') as f:
+        parser.write(f)
+
 def _hg_command(args_list):
     cmd = ['hg'] + args_list
     p = Popen(cmd, stdout=PIPE, stderr=PIPE)
     out, err = p.communicate()
     return out, err, p.returncode
 
+def _hg_discard(dest):
+    out, err, code = _hg_command(['up', '-C', '-R', dest])
+    if code != 0:
+        raise HgError(err)
+
+def _hg_purge(dest):
+    hgrc = os.path.join(dest, '.hg/hgrc')
+    purge_option = [('extensions', 'purge', '')]
+    _set_hgrc(hgrc, purge_option)
+    out, err, code = _hg_command(['purge', '-R', dest])
+    if code == 0:
+        _undo_hgrc(hgrc, purge_option)
+    else:
+        raise HgError(err)
+ 
 def _hg_verify(dest):
     error1 = "hg verify failed."
     error2 = "{dest} is not a repository.".format(dest=dest)
+
     out, err, code = _hg_command(['verify', '-R', dest])
     if code == 1:
         raise HgError(error1, stderr=err)
@@ -91,15 +147,22 @@ def _post_op_hg_revision_check(dest, revision):
             raise HgError(err2, stderr=out)
     else:
         out, err, code = _hg_command(['tip', '-R', dest])
-        if revision in out:   # revision should be part of the output (changeset: revision ...)
+        if revision in out:   # revision should be part of the output (changeset: $revision ...)
             return True
         else:
             if code != 0: # something went wrong with hg tip
                 raise HgError(err1, stderr=err)
-            else: # hg tip is fine, but tip != revision as we hoped
+            else: # hg tip is fine, but tip != revision
                 raise HgError(err2, stderr=out)
 
-def pull_and_update(repo, dest, revision):
+def force_and_clean(dest):
+    _hg_discard(dest)
+    _hg_purge(dest)
+
+def pull_and_update(repo, dest, revision, force):
+    if force == 'yes':
+        force_and_clean(dest)
+
     if _hg_verify(dest):
         cmd1 = ['pull', '-R', dest, '-r', revision]
         out, err, code = _hg_command(cmd1)
@@ -112,16 +175,18 @@ def pull_and_update(repo, dest, revision):
             if code == 1:
                 raise HgError("There are unresolved files in %s" % dest, stderr=err)
             elif code == 0:
-                # so far pull and update seems to be working, check revision is met
+                # so far pull and update seems to be working, check revision and $revision are equal
                 _post_op_hg_revision_check(dest, revision)
                 return True
         # when code aren't 1 or 0 in either command
         raise HgError("", stderr=err)
 
-def clone(repo, dest, revision):
+def clone(repo, dest, revision, force):
     if os.path.exists(dest):
         if _hg_verify(dest):  # make sure it's a real repo
-            if _post_op_hg_revision_check(dest, revision): # make sure revision is met
+            if _post_op_hg_revision_check(dest, revision): # make sure revision and $revision are equal
+                if force == 'yes':
+                    force_and_clean(dest)
                 return False
 
     cmd = ['clone', repo, dest, '-r', revision]
@@ -140,12 +205,14 @@ def main():
             dest = dict(required=True),
             state = dict(default='present', choices=['present', 'absent', 'latest']),
             revision = dict(default="default"),
+            force = dict(default='yes', choices=['yes', 'no']),
         ),
     )
     repo = module.params['repo']
     state = module.params['state']
     dest = module.params['dest']
     revision = module.params['revision']
+    force = module.params['force']
 
     try:
         if state == 'absent':
@@ -153,12 +220,16 @@ def main():
                 shutil.rmtree(dest)
             changed = True
         elif state == 'present':
-            changed = clone(repo, dest, revision)
+            changed = clone(repo, dest, revision, force)
         elif state == 'latest':
-            changed = pull_and_update(repo, dest, revision)
+            changed = pull_and_update(repo, dest, revision, force)
 
         module.exit_json(dest=dest, changed=changed)
-    except HgError as e:
+    #except HgError as e:
+    #    module.fail_json(msg=str(e), params=module.params)
+    #except IOError as e:
+    #    module.fail_json(msg=str(e), params=module.params)
+    except Exception as e:
         module.fail_json(msg=str(e), params=module.params)
 
 # include magic from lib/ansible/module_common.py

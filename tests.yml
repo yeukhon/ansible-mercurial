@@ -6,6 +6,7 @@
      - name: install me
        action: apt name=mercurial state=installed
 
+
 - hosts: 192.168.1.187
   user: vagrant
   tags: 
@@ -43,10 +44,35 @@
      - name: remove playground
        action: file path=/home/vagrant/playground state=absent
 
+- hosts: 192.168.1.187
+  user: vagrant
+  tags:
+     - force
+  tasks:
+
+     - name: clone scm-hook
+       action: hg repo=https://bitbucket.org/yeukhon/scm-hook dest=/home/vagrant/scm-hook
+     - name: make a file in scm-hook
+       action: copy src=newfile.py dest=/home/vagrant/scm-hook/newfile.py
+     - hg: repo=https://bitbucket.org/yeukhon/scm-hook dest=/home/vagrant/scm-hook force=yes
+     - file: path=/home/vagrant/scm-hook/newfile.py state=absent
+     - name: make a file in scm-hook again
+       action: copy src=newfile.py dest=/home/vagrant/scm-hook/newfile.py
+     - hg: repo=https://bitbucket.org/yeukhon/scm-hook dest=/home/vagrant/scm-hook force=no
+     - file: path=/home/vagrant/scm-hook/newfile.py state=file
+     - name: remove scm-hook
+       action: file path=/home/vagrant/scm-hook state=absent
+
+- hosts: 192.168.1.187
+  user: vagrant
+
+  tasks:
+
      - name: bad url
        tags:
         - bad_url
        action: hg repo=https://bitbucket.org/yeukhon/scm-hoo dest=/home/vagrant/scm-hook
+
      - name: bad revision
        tags:
         - bad_revision
